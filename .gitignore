@@ -1,0 +1,35 @@
+# MATLAB/Simulink files
+*.asv
+*.slxc
+slprj/
+*.mex*
+*.log
+catmatlab.log
+octave-workspace
+
+# Microcontroller Build Artifacts
+build/
+bin/
+out/
+.pio/
+.pioenvs/
+.piolibdeps/
+.clangd/
+
+# Compiled object/executable binaries
+*.o
+*.obj
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.su
+
+# IDE and Editor configs
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+.DS_Store
