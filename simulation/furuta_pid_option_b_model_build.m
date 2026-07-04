@@ -15,13 +15,11 @@
 %   theta and alpha are routed to separate Scopes.
 %
 % NOTE ON SIGN CONVENTION:
-%   furuta_pid_design.m tunes gains assuming negative feedback:
-%       tau = -(Kp*alpha + Ki*int(alpha) + Kd*alpha_dot)
-%   This model applies the POSITIVE sign (matching furuta_simulate_pid.m):
-%       tau = +(Kp*alpha + Ki*int(alpha) + Kd*alpha_dot)
-%   If the pendulum diverges in simulation, flip the sign by negating the
-%   Kp, Ki, Kd values in the workspace, or add a Gain block of -1 before
-%   the tau_sum block, and cross-check with furuta_pid_design.m.
+%   Both furuta_pid_design.m and this model apply standard negative feedback:
+%       tau = -(Kp*alpha + Ki*int(alpha) + Kd*alpha_dot) + disturbance
+%   This matches the designed gains (Kp, Ki, Kd) from furuta_pid_design.m.
+%   The negative feedback is achieved by setting the input signs of the
+%   tau_sum block to '-+' (subtracting the PID output, adding the disturbance).
 %
 % Run order:
 %   1. furuta_params.m                       (physical constants)
@@ -133,10 +131,10 @@ add_block('simulink/Sources/Step', blkStep, ...
     'Position', [340 300 400 340], ...
     'Time', '5', 'Before', '0', 'After', '0.05');
 
-%% --- Sum: PID output + disturbance -> tau --------------------------------
+%% --- Sum: -PID output + disturbance -> tau --------------------------------
 blkTauSum = [modelName '/tau_sum'];
 add_block('simulink/Math Operations/Sum', blkTauSum, ...
-    'Position', [1020 220 1060 260], 'Inputs', '++');
+    'Position', [1020 220 1060 260], 'Inputs', '-+');
 
 %% --- Scope blocks -------------------------------------------------------
 blkScopeTheta = [modelName '/theta_scope'];
@@ -187,5 +185,5 @@ fprintf('  1. Press Ctrl+D  (Update Diagram) to finalise MATLAB Function ports.\
 fprintf('  2. Press Run.    alpha should settle near 0 and hold through t = 5s disturbance.\n');
 fprintf('\nIf plant_fcn code did not inject automatically (see any warning above),\n');
 fprintf('open the plant_fcn block and paste furuta_plant_matlabfunction.m contents manually.\n');
-fprintf('\nSign convention: tau = +(Kp*alpha + Ki*int(alpha) + Kd*alpha_dot).\n');
-fprintf('If pendulum diverges, negate Kp/Ki/Kd and re-check against furuta_pid_design.m.\n');
+fprintf('\nSign convention: tau = -(Kp*alpha + Ki*int(alpha) + Kd*alpha_dot) + disturbance.\n');
+fprintf('This aligns with the designed gains from furuta_pid_design.m.\n');

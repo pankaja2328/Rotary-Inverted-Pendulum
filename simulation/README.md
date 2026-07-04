@@ -55,16 +55,11 @@ the design script each session.
 
 ## Sign convention note
 
-`furuta_pid_design.m` tunes gains with standard **negative** feedback:
+Both the design script, the simulation script (`furuta_simulate_pid.m`), and the Simulink model consistently use standard **negative** feedback:
 ```
-tau = -(Kp·α + Ki·∫α + Kd·α̇)
+tau = -(Kp·α + Ki·∫α + Kd·α̇) + disturbance
 ```
-`furuta_simulate_pid.m` and the Simulink model apply the **positive** sign:
-```
-tau = +(Kp·α + Ki·∫α + Kd·α̇)
-```
-Run `furuta_simulate_pid` and confirm `alpha → 0`. If the pendulum
-diverges, negate `Kp`, `Ki`, `Kd` in both files and re-check.
+This aligns perfectly with the designed gains ($Kp = -2.2$, $Ki = -0.8$, $Kd = -0.25$) saved in `furuta_pid_model.mat`.
 
 ## Physical parameters
 

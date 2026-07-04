@@ -13,11 +13,9 @@
 % is printed to the command window.
 %
 % NOTE ON SIGN CONVENTION:
-%   furuta_pid_design.m tunes gains assuming standard negative feedback
-%   (tau = -(Kp*alpha + Ki*int(alpha) + Kd*alpha_dot)). This simulation
-%   applies the POSITIVE sign. Verify which sign stabilises the pendulum
-%   by checking that alpha -> 0; if it diverges, negate Kp, Ki, Kd here
-%   and in furuta_pid_option_b_model_build.m.
+%   Both furuta_pid_design.m and this simulation apply standard negative feedback:
+%       tau = -(Kp*alpha + Ki*int(alpha) + Kd*alpha_dot) + dist
+%   This matches the designed gains (Kp, Ki, Kd) from furuta_pid_design.m.
 %
 % Run order:
 %   1. furuta_params.m             (physical constants)
@@ -65,7 +63,7 @@ for k = 1:length(t)
     alpha_dot = X_out(k, 4);
     int_alpha = X_out(k, 5);   % Fifth augmented state = integral of alpha
     dist      = distMag * (t(k) >= distOn && t(k) < distOff);
-    tau(k)    = (Kp*alpha + Ki*int_alpha + Kd*alpha_dot) + dist;
+    tau(k)    = -(Kp*alpha + Ki*int_alpha + Kd*alpha_dot) + dist;
 end
 
 %% --- Plot results -------------------------------------------------------
@@ -129,8 +127,8 @@ function dxdt = furutaPIDClosedLoop(t, x, Kp, Ki, Kd, ...
     % Additive torque disturbance (rectangular pulse)
     dist = distMag * (t >= distOn && t < distOff);
 
-    % Parallel-form PID on alpha (single-sensor: only alpha is measured)
-    tau = (Kp*alpha + Ki*int_alpha + Kd*alpha_dot) + dist;
+    % Parallel-form PID on alpha (single-sensor: only alpha is measured, negative feedback)
+    tau = -(Kp*alpha + Ki*int_alpha + Kd*alpha_dot) + dist;
 
     % Nonlinear equations of motion (identical to plant_fcn)
     s   = sin(alpha);

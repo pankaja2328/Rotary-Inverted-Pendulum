@@ -80,10 +80,13 @@ fprintf('  Kp = %.4f\n  Ki = %.4f\n  Kd = %.4f\n  Tf = %.5f\n', Kp, Ki, Kd, Tf);
 Cctrl  = pid(Kp, Ki, Kd, Tf);
 sys_cl = feedback(Cctrl * sys_alpha, 1);
 
-if any(real(pole(sys_cl)) >= 0)
+% The state-space model has a pole at 0 corresponding to the unconstrained
+% rotary arm position theta (which is not regulated by the single-sensor PID).
+% We check for poles with real parts strictly greater than 1e-10 to verify stability of the pendulum angle alpha.
+if any(real(pole(sys_cl)) > 1e-10)
     warning('Linear closed-loop is NOT stable. Re-tune PhaseMargin or Q/R weighting.');
 else
-    fprintf('Linear closed-loop alpha response is stable (all poles in LHP).\n');
+    fprintf('Linear closed-loop alpha response is stable (all poles in LHP except the arm position pole at s=0).\n');
 end
 
 %% --- Save tuned gains ---------------------------------------------------
