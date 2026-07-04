@@ -18,17 +18,21 @@ This repository is organized into three primary directories:
 
 The objective is to design a controller that applies torque to a horizontal rotary arm to balance a free-swinging pendulum rod attached at its tip.
 
-```
-       Upright Position (Unstable Equilibrium)
-                 |
-                 |  \ theta (Pendulum Angle)
-                 |                    |    \  Pendulum Rod
-                 |                      +------o (Free Joint)
-                /
-               / alpha (Arm Angle)
-              /
-             /
-         (Motor)
+```text
+                  [Upright Position] (Unstable)
+                          |
+                          |   /  Pendulum Rod (Length: 2*L, Angle: θ)
+                          |  /
+                          | / 
+                          |/  θ (Pendulum Angle)
+                          o (Free Joint)
+                         /
+                        /
+                       /  Rotary Arm (Length: r, Angle: α)
+                      /
+                     /  α (Arm Angle)
+                    /
+                 (Motor) [Actuated Pivot]
 ```
 
 ---
