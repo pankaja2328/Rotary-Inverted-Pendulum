@@ -2,233 +2,209 @@
 
 StepperMotor::StepperMotor(int stepPin, int dirPin, int enPin)
   : _stepPin(stepPin), _dirPin(dirPin), _enPin(enPin), _enabled(false),
-    _mode(MODE_POSITION), _targetSpeed(200.0f), _targetPosition(0),
-    _acceleration(500.0f), _minPulse(20.0f), _startingPulse(50.0f), _startPosition(0),
-    _sweepMin(-200), _sweepMax(200), _sweepingToMax(true),
-    _stepper(AccelStepper::DRIVER, stepPin, dirPin) {}
+    _state(StepperMode::IDLE), _direction(false), _targetSteps(0), _stepCount(0),
+    _currentPosition(0), _c0(0), _c_min(0), _n(0), _d(0), _di(0), _stepDelay(0),
+    _accelCount(0), _acceleration(0), _pulseActive(false) {}
 
-void StepperMotor::begin(uint32_t updateInterval_us) {
-  if (_enPin != -1) {
-    pinMode(_enPin, OUTPUT);
-    enable(false); // Start disabled for safety
-  }
-
-  _stepper.setMaxSpeed(2000.0f);
-  _stepper.setAcceleration(_acceleration);
-  _stepper.setCurrentPosition(0);
-
-  // Start hardware timer — callback fires every updateInterval_us microseconds
-  if (!_timer.begin(_timerCallback, this, updateInterval_us, "StepperUpdate")) {
-    Serial.println("[StepperMotor] ERROR: Failed to start hardware timer!");
-  }
+StepperMotor::~StepperMotor() {
+  _timerService.stop();
 }
 
-// Static trampoline: esp_timer passes the StepperMotor instance as arg
-void StepperMotor::_timerCallback(void* arg) {
-  StepperMotor* motor = static_cast<StepperMotor*>(arg);
-  motor->update();
+void StepperMotor::begin() {
+  pinMode(_stepPin, OUTPUT);
+  pinMode(_dirPin, OUTPUT);
+  pinMode(_enPin, OUTPUT);
+  
+  digitalWrite(_stepPin, LOW);
+  digitalWrite(_dirPin, LOW);
+  digitalWrite(_enPin, HIGH); // Coils initially disabled (active low)
+  
+  // Start the 20 microsecond periodic timer
+  _timerService.begin(timerCallback, this, 20, "StepperTimer");
 }
 
-void StepperMotor::enable(bool enable) {
+void StepperMotor::setEnable(bool enable) {
   _enabled = enable;
-  if (_enPin != -1) {
-    // Most stepper drivers (A4988, DRV8825, TMC2208) are active LOW for ENABLE
-    digitalWrite(_enPin, _enabled ? LOW : HIGH);
-  }
+  digitalWrite(_enPin, enable ? LOW : HIGH); // Active low enable pin
 }
 
-void StepperMotor::setMode(Mode mode) {
-  _mode = mode;
-  if (_mode == MODE_SPEED) {
-    _stepper.setSpeed(_targetSpeed);
-    if (_targetSpeed != 0.0f) {
-      enable(true);
+bool StepperMotor::isEnabled() const {
+  return _enabled;
+}
+
+StepperMode StepperMotor::getMode() const {
+  return _state;
+}
+
+long StepperMotor::getCurrentPosition() const {
+  return _currentPosition;
+}
+
+float StepperMotor::getCurrentSpeed() const {
+  if (_state == StepperMode::IDLE || _stepDelay == 0) {
+    return 0.0f;
+  }
+  return 1000000.0f / (_stepDelay * 20.0f);
+}
+
+void StepperMotor::moveRelative(uint32_t steps, bool direction, uint32_t min_interval_ticks, uint32_t start_interval_ticks, uint32_t accel_steps) {
+  if (steps == 0 || min_interval_ticks == 0) {
+    return;
+  }
+  
+  // Wait/stop if busy
+  if (_state != StepperMode::IDLE) {
+    stop();
+  }
+
+  if (start_interval_ticks < min_interval_ticks) {
+    start_interval_ticks = min_interval_ticks;
+  }
+  if (accel_steps == 0) {
+    start_interval_ticks = min_interval_ticks;
+  }
+
+  _targetSteps = steps;
+  _stepCount = 0;
+  _direction = direction;
+  _c0 = start_interval_ticks;
+  _c_min = min_interval_ticks;
+  _d = _c0;
+  _di = 0;
+  _n = 0;
+
+  if (accel_steps == 0 || start_interval_ticks <= min_interval_ticks) {
+    _accelCount = 0;
+    _d = _c_min;
+    _acceleration = 0;
+  } else {
+    _accelCount = accel_steps;
+    if (_accelCount * 2 > (int32_t)steps) {
+      _accelCount = steps / 2;
+    }
+    if (_accelCount == 0) {
+      _d = _c_min;
+      _acceleration = 0;
     } else {
-      enable(false);
-    }
-  } else if (_mode == MODE_SWEEP) {
-    _sweepingToMax = true;
-    _startPosition = _stepper.currentPosition();
-    _stepper.moveTo(_sweepMax);
-    enable(true);
-  } else if (_mode == MODE_POSITION) {
-    _startPosition = _stepper.currentPosition();
-    _stepper.moveTo(_targetPosition);
-    if (_stepper.distanceToGo() != 0) {
-      enable(true);
-    } else {
-      enable(false);
+      uint32_t v_start = 1048576 / _c0;
+      uint32_t v_max = 1048576 / _c_min;
+      _acceleration = (v_max - v_start) / _accelCount;
     }
   }
-}
 
-void StepperMotor::setTargetPosition(long steps) {
-  _targetPosition = steps;
-  if (_mode == MODE_POSITION) {
-    _startPosition = _stepper.currentPosition();
-    _stepper.moveTo(_targetPosition);
-    if (_stepper.distanceToGo() != 0) {
-      enable(true);
-    }
-  }
-}
+  // Set direction pin
+  digitalWrite(_dirPin, _direction ? HIGH : LOW);
+  
+  // Enable coils if disabled
+  setEnable(true);
 
-void StepperMotor::setTargetSpeed(float stepsPerSec) {
-  _targetSpeed = stepsPerSec;
-  float limit = abs(_targetSpeed) * 2.0f;
-  if (limit < 1000.0f) limit = 1000.0f;
-  _stepper.setMaxSpeed(limit);
-  if (_mode == MODE_SPEED) {
-    _stepper.setSpeed(_targetSpeed);
-    if (_targetSpeed != 0.0f) {
-      enable(true);
-    }
-  }
-}
+  _pulseActive = false;
+  _stepDelay = _d;
 
-void StepperMotor::setAcceleration(float stepsPerSecSq) {
-  _acceleration = stepsPerSecSq;
-  _stepper.setAcceleration(_acceleration);
-}
-
-void StepperMotor::setMinPulse(float minPulse) {
-  _minPulse = minPulse;
-}
-
-void StepperMotor::setStartingPulse(float startingPulse) {
-  _startingPulse = startingPulse;
-}
-
-void StepperMotor::setSweepLimits(long minVal, long maxVal) {
-  _sweepMin = minVal;
-  _sweepMax = maxVal;
-  if (_mode == MODE_SWEEP) {
-    _startPosition = _stepper.currentPosition();
-    if (_sweepingToMax) {
-      _stepper.moveTo(_sweepMax);
-    } else {
-      _stepper.moveTo(_sweepMin);
-    }
-    enable(true);
+  if (accel_steps == 0 || start_interval_ticks <= min_interval_ticks || _accelCount == 0) {
+    _state = StepperMode::CONSTANT;
+  } else {
+    _state = StepperMode::ACCEL;
   }
 }
 
 void StepperMotor::stop() {
-  _stepper.stop();
-  if (_mode == MODE_SPEED) {
-    setTargetSpeed(0.0f);
-  }
-  enable(false);
+  _state = StepperMode::IDLE;
+  digitalWrite(_stepPin, LOW);
+  _pulseActive = false;
 }
 
-void StepperMotor::update() {
-  if (!_enabled) return;
+void StepperMotor::timerCallback(void* arg) {
+  static_cast<StepperMotor*>(arg)->handleTimerInterrupt();
+}
 
-  if (_mode == MODE_POSITION) {
-    long distToGo = _stepper.distanceToGo();
-    if (distToGo == 0) {
-      enable(false);
-      return;
+void StepperMotor::handleTimerInterrupt() {
+  if (_state == StepperMode::IDLE) {
+    return;
+  }
+  
+  _di++;
+  if (!_pulseActive) {
+    if (_di >= (_stepDelay / 2)) {
+      digitalWrite(_stepPin, HIGH);
+      _pulseActive = true;
     }
+  } else {
+    if (_di >= _stepDelay) {
+      digitalWrite(_stepPin, LOW);
+      _pulseActive = false;
+      _di = 0;
+      _stepCount++;
 
-    long currentPos = _stepper.currentPosition();
-    long totalDist = abs(_targetPosition - _startPosition);
-    long distTraveled = abs(currentPos - _startPosition);
-    long distLeft = abs(distToGo);
+      // Update position
+      if (_direction) {
+        _currentPosition++;
+      } else {
+        _currentPosition--;
+      }
 
-    float Vmax = abs(_targetSpeed);
-    float Vstart = min(_startingPulse, Vmax);
-    float Vmin = min(_minPulse, Vmax);
-    float a = _acceleration;
+      if (_stepCount >= _targetSteps) {
+        _state = StepperMode::IDLE;
+        // Keep driver enabled or disable? In reference code it resets to enable_pin_state (disabled)
+        // Let's keep it enabled so it holds torque, or disable if requested. The main.cpp loop
+        // displays status. We will keep it enabled, or disable after move.
+        // The reference code does:
+        // gpio_write(stepper_motor_hw_configs[i].enable_pin, stepper_motor_hw_configs[i].enable_pin_state);
+        // which disables it. Let's match the reference code by disabling.
+        setEnable(false);
+        return;
+      }
 
-    float d_accel = (a > 0.0f) ? ((Vmax * Vmax - Vstart * Vstart) / (2.0f * a)) : 0.0f;
-    float d_decel = (a > 0.0f) ? ((Vmax * Vmax - Vmin * Vmin) / (2.0f * a)) : 0.0f;
+      switch (_state) {
+      case StepperMode::ACCEL:
+        _n++;
+        if (_n >= _accelCount) {
+          _d = _c_min;
+          _state = StepperMode::CONSTANT;
+        } else {
+          uint32_t v_start = 1048576 / _c0;
+          uint32_t v_n = v_start + (_n * _acceleration);
+          _d = (v_n == 0) ? _c_min : (1048576 / v_n);
+        }
+        if (_state == StepperMode::CONSTANT &&
+            _stepCount >= (_targetSteps - _accelCount)) {
+          _state = StepperMode::DECEL;
+          _n = _accelCount;
+        }
+        break;
 
-    float d_accel_eff = d_accel;
-    float d_decel_eff = d_decel;
-    float Vpeak = Vmax;
+      case StepperMode::CONSTANT:
+        if (_stepCount >= (_targetSteps - _accelCount)) {
+          _state = StepperMode::DECEL;
+          _n = _accelCount;
+        }
+        break;
 
-    if (totalDist < (d_accel + d_decel) && (d_accel + d_decel) > 0.0f) {
-      float ratio = (float)totalDist / (d_accel + d_decel);
-      d_accel_eff = d_accel * ratio;
-      d_decel_eff = d_decel * ratio;
-      Vpeak = Vstart + (Vmax - Vstart) * ratio;
+      case StepperMode::DECEL:
+        if (_n > 0)
+          _n--;
+        if (_n == 0) {
+          _d = _c0;
+        } else {
+          uint32_t v_start = 1048576 / _c0;
+          uint32_t v_n = v_start + (_n * _acceleration);
+          _d = (v_n == 0) ? _c0 : (1048576 / v_n);
+        }
+        break;
+
+      case StepperMode::STOPPING:
+        _state = StepperMode::IDLE;
+        setEnable(false);
+        return;
+
+      default:
+        break;
+      }
+      
+      _stepDelay = _d;
+      if (_stepDelay == 0) {
+        _stepDelay = 1;
+      }
     }
-
-    float speedVal = Vpeak;
-    if (d_accel_eff > 0.0f && distTraveled < d_accel_eff) {
-      float p = (float)distTraveled / d_accel_eff;
-      float f = 0.5f * (1.0f - cos(PI * p));
-      speedVal = Vstart + (Vpeak - Vstart) * f;
-    } else if (d_decel_eff > 0.0f && distLeft < d_decel_eff) {
-      float p = (float)distLeft / d_decel_eff;
-      float f = 0.5f * (1.0f - cos(PI * p));
-      speedVal = Vmin + (Vpeak - Vmin) * f;
-    }
-
-    if (distToGo < 0) {
-      speedVal = -speedVal;
-    }
-
-    _stepper.setSpeed(speedVal);
-    _stepper.runSpeed();
-
-  } else if (_mode == MODE_SPEED) {
-    if (_targetSpeed != 0.0f) {
-      _stepper.runSpeed();
-    } else {
-      enable(false);
-    }
-  } else if (_mode == MODE_SWEEP) {
-    long distToGo = _stepper.distanceToGo();
-    if (distToGo == 0) {
-      _sweepingToMax = !_sweepingToMax;
-      _startPosition = _stepper.currentPosition();
-      _stepper.moveTo(_sweepingToMax ? _sweepMax : _sweepMin);
-      distToGo = _stepper.distanceToGo();
-    }
-
-    long currentPos = _stepper.currentPosition();
-    long targetPos = _sweepingToMax ? _sweepMax : _sweepMin;
-    long totalDist = abs(targetPos - _startPosition);
-    long distTraveled = abs(currentPos - _startPosition);
-    long distLeft = abs(distToGo);
-
-    float Vmax = abs(_targetSpeed);
-    float Vstart = min(_startingPulse, Vmax);
-    float Vmin = min(_minPulse, Vmax);
-    float a = _acceleration;
-
-    float d_accel = (a > 0.0f) ? ((Vmax * Vmax - Vstart * Vstart) / (2.0f * a)) : 0.0f;
-    float d_decel = (a > 0.0f) ? ((Vmax * Vmax - Vmin * Vmin) / (2.0f * a)) : 0.0f;
-
-    float d_accel_eff = d_accel;
-    float d_decel_eff = d_decel;
-    float Vpeak = Vmax;
-
-    if (totalDist < (d_accel + d_decel) && (d_accel + d_decel) > 0.0f) {
-      float ratio = (float)totalDist / (d_accel + d_decel);
-      d_accel_eff = d_accel * ratio;
-      d_decel_eff = d_decel * ratio;
-      Vpeak = Vstart + (Vmax - Vstart) * ratio;
-    }
-
-    float speedVal = Vpeak;
-    if (d_accel_eff > 0.0f && distTraveled < d_accel_eff) {
-      float p = (float)distTraveled / d_accel_eff;
-      float f = 0.5f * (1.0f - cos(PI * p));
-      speedVal = Vstart + (Vpeak - Vstart) * f;
-    } else if (d_decel_eff > 0.0f && distLeft < d_decel_eff) {
-      float p = (float)distLeft / d_decel_eff;
-      float f = 0.5f * (1.0f - cos(PI * p));
-      speedVal = Vmin + (Vpeak - Vmin) * f;
-    }
-
-    if (distToGo < 0) {
-      speedVal = -speedVal;
-    }
-
-    _stepper.setSpeed(speedVal);
-    _stepper.runSpeed();
   }
 }

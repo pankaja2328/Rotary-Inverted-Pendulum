@@ -1,11 +1,8 @@
 #pragma once
+#include <Arduino.h>
 #include <WebServer.h>
 #include "../../devices/stepper/StepperMotor.h"
 
-/**
- * @file  WebService.h
- * @brief Serves the dashboard page, JSON status API, and receives control endpoints.
- */
 class WebService {
 public:
   WebService(StepperMotor& stepper);
@@ -13,11 +10,10 @@ public:
   void handle();
 
 private:
-  WebServer _server;
   StepperMotor& _stepper;
+  WebServer _server;
 
-  void _handleRoot();
-  void _handleData();
-  void _handleControl();
-  void _handleNotFound();
+  void handleRoot();
+  void handleControl();
+  void handleStatus();
 };

@@ -1,12 +1,10 @@
 #pragma once
-#include <Arduino.h>
-#include <WiFi.h>
 
 class WiFiService {
 public:
   WiFiService(const char* ssid, const char* password);
   void begin();
-  IPAddress getIPAddress() const;
+  const char* getIPAddress() const;
 
 private:
   const char* _ssid;

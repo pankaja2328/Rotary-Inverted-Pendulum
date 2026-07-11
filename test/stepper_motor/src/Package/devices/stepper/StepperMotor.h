@@ -1,66 +1,30 @@
 #pragma once
 #include <Arduino.h>
-#include <AccelStepper.h>
 #include "../../services/timer/TimerService.h"
 
-/**
- * @file  StepperMotor.h
- * @brief Device driver wrapping AccelStepper for STEP/DIR drivers (e.g. A4988, DRV8825).
- *
- * Motion updates are driven by an esp_timer hardware callback (via TimerService)
- * instead of the main loop, giving deterministic, jitter-free step timing.
- */
+enum class StepperMode {
+  IDLE = 0,
+  ACCEL = 1,
+  CONSTANT = 2,
+  DECEL = 3,
+  STOPPING = 4
+};
+
 class StepperMotor {
 public:
-  enum Mode {
-    MODE_POSITION,
-    MODE_SPEED,
-    MODE_SWEEP
-  };
+  StepperMotor(int stepPin, int dirPin, int enPin);
+  ~StepperMotor();
 
-  StepperMotor(int stepPin = 14, int dirPin = 12, int enPin = 13);
+  void begin();
+  void setEnable(bool enable);
+  bool isEnabled() const;
+  
+  StepperMode getMode() const;
+  long getCurrentPosition() const;
+  float getCurrentSpeed() const;
 
-  /**
-   * @brief Initialise driver, enable pin, and start the hardware timer.
-   * @param updateInterval_us  Timer period in microseconds (default 200 us = 5 kHz).
-   */
-  void begin(uint32_t updateInterval_us = 200);
-  void update();
-
-  // Mode settings
-  void setMode(Mode mode);
-  Mode getMode() const { return _mode; }
-
-  // Enable/Disable output
-  void enable(bool enable);
-  bool isEnabled() const { return _enabled; }
-
-  // Position control (MODE_POSITION)
-  void setTargetPosition(long steps);
-  long getTargetPosition() const { return _targetPosition; }
-  long getCurrentPosition() { return _stepper.currentPosition(); }
-
-  // Speed control (MODE_SPEED)
-  void setTargetSpeed(float stepsPerSec);
-  float getTargetSpeed() const { return _targetSpeed; }
-  float getCurrentSpeed() { return _stepper.speed(); }
-
-  // Acceleration
-  void setAcceleration(float stepsPerSecSq);
-  float getAcceleration() const { return _acceleration; }
-
-  // S-Curve parameters
-  void setMinPulse(float minPulse);
-  float getMinPulse() const { return _minPulse; }
-
-  void setStartingPulse(float startingPulse);
-  float getStartingPulse() const { return _startingPulse; }
-
-  // Sweep limits (MODE_SWEEP)
-  void setSweepLimits(long minVal, long maxVal);
-  long getSweepMin() const { return _sweepMin; }
-  long getSweepMax() const { return _sweepMax; }
-
+  // Move command similar to reference code (intervals in 20uS ticks)
+  void moveRelative(uint32_t steps, bool direction, uint32_t min_interval_ticks, uint32_t start_interval_ticks, uint32_t accel_steps);
   void stop();
 
 private:
@@ -69,25 +33,25 @@ private:
   int _enPin;
   bool _enabled;
 
-  Mode _mode;
-  float _targetSpeed;
-  long _targetPosition;
-  float _acceleration;
+  // Controller state variables (volatile since they are modified in ISR/timer task)
+  volatile StepperMode _state;
+  volatile bool _direction;
+  volatile uint32_t _targetSteps;
+  volatile uint32_t _stepCount;
+  volatile long _currentPosition;
 
-  float _minPulse;
-  float _startingPulse;
-  long _startPosition;
+  volatile uint32_t _c0;
+  volatile uint32_t _c_min;
+  volatile int32_t _n;
+  volatile uint32_t _d;
+  volatile uint32_t _di;
+  volatile uint32_t _stepDelay;
+  volatile int32_t _accelCount;
+  volatile uint32_t _acceleration;
+  volatile bool _pulseActive;
 
-  long _sweepMin;
-  long _sweepMax;
-  bool _sweepingToMax;
+  TimerService _timerService;
 
-  AccelStepper _stepper;
-  TimerService _timer;
-
-  /**
-   * @brief Static trampoline passed to esp_timer.
-   *        Recovers the StepperMotor instance from the void* arg and calls update().
-   */
-  static void _timerCallback(void* arg);
+  static void timerCallback(void* arg);
+  void handleTimerInterrupt();
 };

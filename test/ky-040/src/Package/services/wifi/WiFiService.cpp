@@ -1,13 +1,15 @@
 #include "WiFiService.h"
+#include <WiFi.h>
 
 WiFiService::WiFiService(const char* ssid, const char* password)
   : _ssid(ssid), _password(password) {}
 
 void WiFiService::begin() {
-  WiFi.mode(WIFI_AP);
   WiFi.softAP(_ssid, _password);
 }
 
-IPAddress WiFiService::getIPAddress() const {
-  return WiFi.softAPIP();
+const char* WiFiService::getIPAddress() const {
+  static char ipStr[16];
+  strncpy(ipStr, WiFi.softAPIP().toString().c_str(), sizeof(ipStr));
+  return ipStr;
 }
